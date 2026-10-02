@@ -1,0 +1,582 @@
+game.Players.LocalPlayer.PlayerScripts.CharacterAndBeamMove.Enabled = false
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/katnaa-debug/SolarisUI/refs/heads/main/Library1.lua"))()
+
+-- Unlock MouseMouseBehavior = Enum.MouseBehavior.Default
+
+-- Global state storage
+local ToggleStates = {}
+function SetToggleState(flag, value) ToggleStates[flag] = value end
+function GetToggleState(flag) return ToggleStates[flag] or false end
+
+local Options = Library.Items or Library.Flags or {}
+local Toggles = Library.Flags or Library.Items or {}
+local Window = Library:CreateWindow({
+	Title = "DAVI",
+	Theme = "Void",
+	ToggleKey = Enum.KeyCode.RightShift,
+	Transparency = 0.25,
+	ShowWatermark = { Enabled = true, Title = true, User = true, FPS = true, Duration = false, Ping = true },
+	AutoSave = true,
+	ConfigFolder = "DAVI_Config"
+})
+local Tabs = {
+	Defense = Window:CreateTab("defense", true, "7461510456"),
+	Target = Window:CreateTab("target", true, "107058246184363"),
+	Grab = Window:CreateTab("grab", true, "85607241723723"), -- РќРѕРІР° С–РєРѕРЅРєР° Drag
+	Player = Window:CreateTab("player", true, "124871982298256"),
+	Misc = Window:CreateTab("misc", true, "114167292947807"), -- РќРѕРІР° С–РєРѕРЅРєР° Sparkles
+	Keybinds = Window:CreateTab("keybinds", true, "4814130203"), -- РќРѕРІР° С–РєРѕРЅРєР° BadgeLogo
+	Visuals  = Window:CreateTab("visuals",  true, "7733955511"),
+}
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local PS = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local R = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = workspace
+local Player = PS.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local CE = RS:WaitForChild("CharacterEvents", 10)
+local BeingHeld = Player:WaitForChild("IsHeld", 10)
+local StruggleEvent = CE and CE:WaitForChild("Struggle")
+function notify(title, content, duration)
+	Library:Notify({ Title = title or "Notification", Content = content or "", Duration = duration or 5,
+	 })
+end
+function sendHubLoadedMessage()
+	local message = " Owner Version | XOCU loaded. "
+	local sent = false
+	pcall(function()
+		local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+		if chatEvents then
+			local say = chatEvents:FindFirstChild("SayMessageRequest")
+			if say and typeof(say.FireServer) == "function" then
+				say:FireServer(message, "All")
+				sent = true
+			end
+		end
+	end)
+	if not sent then
+		pcall(function()
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Name = message;
+				Color = Color3.fromRGB(255, 170, 0);
+				Font = Enum.Font.SourceSansBold;
+				FontSize = Enum.FontSize.Size18;
+			})
+		end)
+	end
+end
+task.spawn(function()
+	task.wait(1)
+	sendHubLoadedMessage()
+end)
+local paintPartsBackup = {}
+local paintConnections = {}
+function deleteAllPaintParts()
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		if obj:IsA("BasePart") and obj.Name == "PaintPlayerPart" then
+			local clone = obj:Clone()
+			clone.Archivable = true
+			paintPartsBackup[obj:GetDebugId()] = {
+				clone = clone,
+				parent = obj.Parent
+			}
+			obj:Destroy()
+		end
+	end
+end
+local function restorePaintParts()
+	for _, data in pairs(paintPartsBackup) do
+		if data.clone and data.parent then
+			data.clone.Parent = data.parent
+		end
+	end
+	paintPartsBackup = {}
+end
+local function watchNewPaintParts()
+	table.insert(paintConnections, Workspace.DescendantAdded:Connect(function(obj)
+		if obj:IsA("BasePart") and obj.Name == "PaintPlayerPart" then
+			task.defer(function()
+				if obj and obj.Parent then
+					local clone = obj:Clone()
+					clone.Archivable = true
+					paintPartsBackup[obj:GetDebugId()] = {
+						clone = clone,
+						parent = obj.Parent
+					}
+					obj:Destroy()
+				end
+			end)
+		end
+	end))
+end
+local function disconnectWatchers()
+	for _, conn in ipairs(paintConnections) do
+		if conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	paintConnections = {}
+end
+local function setTouchQuery(state)
+	local char = Workspace:FindFirstChild(Player.Name)
+	if not char then
+		return
+	end
+	for _, v in ipairs(char:GetChildren()) do
+		if v:IsA("Part") or v:IsA("BasePart") then
+			v.CanTouch = state
+			v.CanQuery = state
+		end
+	end
+end
+local antiGucciConnection
+local safePosition
+local restoreFrames = 0
+local function spawnBlobman()
+	local args = {
+		[1] = "CreatureBlobman",
+		[2] = CFrame.new(0, 5000000, 0),
+		[3] = Vector3.new(0, 60, 0)
+	}
+	pcall(function()
+		ReplicatedStorage.MenuToys.SpawnToyRemoteFunction:InvokeServer(unpack(args))
+	end)
+	local folder = Workspace:WaitForChild(Player.Name .. "SpawnedInToys", 5)
+	if folder and folder:FindFirstChild("CreatureBlobman") then
+		local blob = folder.CreatureBlobman
+		if blob:FindFirstChild("Head") then
+			blob.Head.CFrame = CFrame.new(0, 50000, 0)
+			blob.Head.Anchored = true
+		end
+		notify("Success", "Blobman Spawned!", 3)
+	end
+end
+local function startAntiGucci()
+	local character = Player.Character or Player.CharacterAdded:Wait()
+	local humanoid = character:WaitForChild("Humanoid")
+	local rootPart = character:WaitForChild("HumanoidRootPart")
+	safePosition = rootPart.Position
+	local folder = Workspace:FindFirstChild(Player.Name .. "SpawnedInToys")
+	local blob = folder and folder:FindFirstChild("CreatureBlobman")
+	local seat = blob and blob:FindFirstChild("VehicleSeat")
+	if not blob then
+		spawnBlobman()
+		task.wait(0.3)
+		folder = Workspace:FindFirstChild(Player.Name .. "SpawnedInToys")
+		blob = folder and folder:FindFirstChild("CreatureBlobman")
+		seat = blob and blob:FindFirstChild("VehicleSeat")
+	end
+	if seat and seat:IsA("VehicleSeat") then
+		rootPart.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
+		seat:Sit(humanoid)
+	end
+	humanoid:GetPropertyChangedSignal("Jump"):Connect(function()
+		if humanoid.Jump and humanoid.Sit then
+			restoreFrames = 15
+			safePosition = rootPart.Position
+		end
+	end)
+	if antiGucciConnection then
+		antiGucciConnection:Disconnect()
+	end
+	antiGucciConnection = R.Heartbeat:Connect(function()
+		if not rootPart or not humanoid then
+			return
+		end
+		ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(rootPart, 0)
+		if restoreFrames > 0 then
+			rootPart.CFrame = CFrame.new(safePosition)
+			restoreFrames = restoreFrames - 1
+		end
+	end)
+	task.spawn(function()
+		while humanoid.Sit do
+			task.wait(1)
+		end
+		task.wait(0.5)
+		rootPart.CFrame = CFrame.new(safePosition)
+	end)
+end
+local function stopAntiGucci()
+	if antiGucciConnection then
+		antiGucciConnection:Disconnect()
+		antiGucciConnection = nil
+	end
+	-- Unsit humanoid first so the server releases the seat
+	local char = Player.Character
+	local hum = char and char:FindFirstChild("Humanoid")
+	if hum then
+		hum.Sit = false
+		pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	end
+	local blobFolder = Workspace:FindFirstChild(Player.Name .. "SpawnedInToys")
+	if blobFolder and blobFolder:FindFirstChild("CreatureBlobman") then
+		local blob = blobFolder.CreatureBlobman
+		-- Fire server-side destroy remote so it fully removes server-side
+		pcall(function()
+			ReplicatedStorage.MenuToys.DestroyToy:FireServer(blob)
+		end)
+		task.wait(0.1)
+		-- Fallback local destroy in case remote didn't work
+		if blob and blob.Parent then
+			blob:Destroy()
+		end
+	end
+end
+local antiGucciConnectionTrain
+local safePositionTrain
+local restoreFramesTrain = 0
+local function startAntiGucciTrain()
+	local character = Player.Character or Player.CharacterAdded:Wait()
+	local humanoid = character:WaitForChild("Humanoid")
+	local rootPart = character:WaitForChild("HumanoidRootPart")
+	safePositionTrain = rootPart.Position
+	local folder = workspace.Map.AlwaysHereTweenedObjects
+	local train = folder and folder:FindFirstChild("Train")
+	local seat
+	if train then
+		for _, d in ipairs(train:GetDescendants()) do
+			if d:IsA("Seat") then
+				seat = d
+				break
+			end
+		end
+	end
+	if seat then
+		rootPart.CFrame = seat.CFrame + Vector3.new(0, 2, 0)
+		seat:Sit(humanoid)
+	end
+	humanoid:GetPropertyChangedSignal("Jump"):Connect(function()
+		if humanoid.Jump and humanoid.Sit then
+			restoreFramesTrain = 15
+			safePositionTrain = rootPart.Position
+		end
+	end)
+	if antiGucciConnectionTrain then
+		antiGucciConnectionTrain:Disconnect()
+	end
+	antiGucciConnectionTrain = R.Heartbeat:Connect(function()
+		if not rootPart or not humanoid then
+			return
+		end
+		ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(rootPart, 0)
+		if restoreFramesTrain > 0 then
+			rootPart.CFrame = CFrame.new(safePositionTrain)
+			restoreFramesTrain = restoreFramesTrain - 1
+		end
+	end)
+	task.spawn(function()
+		while humanoid.Sit do
+			task.wait(1)
+		end
+		task.wait(0.5)
+		rootPart.CFrame = CFrame.new(safePositionTrain)
+	end)
+end
+local function stopAntiGucciTrain()
+	if antiGucciConnectionTrain then
+		antiGucciConnectionTrain:Disconnect()
+		antiGucciConnectionTrain = nil
+	end
+	local trainFolder = workspace.Map.AlwaysHereTweenedObjects
+	if trainFolder and trainFolder:FindFirstChild("Train") then
+		ResetPlayer(game.Players.LocalPlayer)
+	end
+end
+local DefenseGroup = Tabs.Defense:CreateBlock({Name = "Defense Main", Side = "Left"})
+local DefenseExtra = Tabs.Defense:CreateBlock({Name = "Extra Defense", Side = "Right"})
+local antiGrabExplosionConn, antiGrabHeldConn, antiGrabStruggleConn, antiGrabHumConn, antiGrabAnchorConn
+local antiGrabRootCF, antiGrabRootPos, antiGrabHardFreeze = nil, nil, false
+local function antiGrabUnfreeze(char)
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.Anchored = false
+		if hrp:FindFirstChild("FreezeJoint") then
+			hrp.FreezeJoint:Destroy()
+		end
+	end
+	antiGrabHardFreeze = false
+	if antiGrabAnchorConn then
+		antiGrabAnchorConn:Disconnect()
+		antiGrabAnchorConn = nil
+	end
+end
+local function antiGrabFreezeInPlace(char)
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		return
+	end
+	antiGrabRootCF = hrp.CFrame
+	antiGrabRootPos = hrp.Position
+	antiGrabHardFreeze = true
+	if not hrp:FindFirstChild("FreezeJoint") then
+		local align = Instance.new("AlignPosition")
+		align.Name = "FreezeJoint"
+		align.Mode = Enum.PositionAlignmentMode.OneAttachment
+		align.MaxForce = 1e6
+		align.MaxVelocity = 0
+		align.Responsiveness = 200
+		local att = Instance.new("Attachment", hrp)
+		align.Attachment0 = att
+		align.Position = antiGrabRootPos
+		align.Parent = hrp
+	end
+	antiGrabAnchorConn = R.Heartbeat:Connect(function()
+		if antiGrabHardFreeze and hrp then
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.AssemblyAngularVelocity = Vector3.zero
+			hrp.CFrame = antiGrabRootCF
+		end
+	end)
+end
+local function antiGrabReconnect()
+	local char = Player.Character or Player.CharacterAdded:Wait()
+	local hum = char:WaitForChild("Humanoid")
+	local hrp = char:WaitForChild("HumanoidRootPart")
+	local fp = hrp:FindFirstChild("FirePlayerPart")
+	if fp then
+		fp:Destroy()
+	end
+	if antiGrabHumConn then
+		antiGrabHumConn:Disconnect()
+	end
+	antiGrabHumConn = hum.Changed:Connect(function(p)
+		if p == "Sit" and hum.Sit then
+			if not (hum.SeatPart and tostring(hum.SeatPart.Parent) == "CreatureBlobman") then
+				hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+				hum.Sit = false
+			end
+		end
+	end)
+end
+local autoStruggleConn = nil
+local AntiGrabEnabled = false
+local HeldConnection = nil
+-- Anti Grab [BETA]
+do
+    local AntiGrab = false
+    local AntiGrabProc = false
+    local AGWalk = false
+    local Cons = {}
+    
+    local function DiscAll()
+        for k, v in pairs(Cons) do
+            if v then v:Disconnect() end
+        end
+        table.clear(Cons)
+    end
+
+    local function ApplyAntiGrab(char)
+        if not char or not AntiGrab then return end
+        
+        -- Use WaitForChild to prevent script breaking if parts haven't loaded yet
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        local hum = char:WaitForChild("Humanoid", 5)
+        local head = char:WaitForChild("Head", 5)
+        if not (hrp and hum and head) then return end
+
+        -- Initial constraint disabling
+        for _, v in pairs(char:GetChildren()) do
+            if v:IsA("BasePart") and v:FindFirstChild("BallSocketConstraint") and v.Name ~= "Head" then
+                v.BallSocketConstraint.Enabled = false
+                if v:FindFirstChild("RagdollLimbPart") then
+                    v.RagdollLimbPart.WeldConstraint.Enabled = false
+                end
+            end
+        end
+
+        Cons["AGHead"] = head.ChildAdded:Connect(function(PartOwner)
+            if PartOwner.Name == "PartOwner" then
+                if not AntiGrabProc then
+                    AntiGrabProc = true
+                    hum.Sit = false
+                    StruggleEvent:FireServer(Player)
+                    
+                    task.spawn(function() 
+                        while (head and head:FindFirstChild("PartOwner")) or BeingHeld.Value do
+                            StruggleEvent:FireServer(Player)
+                            ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(hrp, 0)
+                            task.wait()
+                        end
+                    end)
+                    
+                    hrp.Anchored = true
+                    if not AGWalk then
+                        AGWalk = true
+                        while BeingHeld.Value and task.wait() do
+                            hrp.CFrame = hrp.CFrame + hum.MoveDirection * 0.43
+                        end
+                    end
+                    hrp.Anchored = false
+                    AntiGrabProc = false
+                    AGWalk = false
+                end
+            end
+        end)
+        
+        local ragdolled = hum:WaitForChild("Ragdolled", 5)
+        if ragdolled then
+            Cons["AGRagdoll"] = ragdolled.Changed:Connect(function()
+                if hum.Ragdolled.Value then
+                    for _, v in pairs(char:GetChildren()) do
+                        if v:IsA("BasePart") and v:FindFirstChild("BallSocketConstraint") and v.Name ~= "Head" then
+                            v.BallSocketConstraint.Enabled = false
+                            if v:FindFirstChild("RagdollLimbPart") then
+                                v.RagdollLimbPart.WeldConstraint.Enabled = false
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        
+        local weldHRP = hrp:WaitForChild("WeldHRP", 5)
+        if weldHRP then
+            Cons["AGWeld"] = weldHRP.Changed:Connect(function()
+                if hrp.WeldHRP.Enabled then
+                    while not hum.Sit do task.wait() end
+                    hum.Sit = false
+                    hum.AutoRotate = true
+                    hum.HipHeight = 1
+                    while hrp.WeldHRP.Enabled and task.wait() do
+                        head.CFrame = hrp.CFrame + Vector3.new(0, 1.35, 0)
+                    end
+                    hum.HipHeight = 0
+                end
+            end)
+        end
+    end
+
+    DefenseGroup:CreateToggle({
+        Name = "Anti Grab [BEST (use solo)]",
+        Flag = "AntiGrab",
+        Default = false,
+        Callback = function(Value)
+            AntiGrab = Value
+            DiscAll()
+            
+            if AntiGrab then
+                ApplyAntiGrab(Player.Character)
+                Cons["AGChar"] = Player.CharacterAdded:Connect(ApplyAntiGrab)
+            else
+                local char = Player.Character
+                if char then
+                    for _, v in pairs(char:GetChildren()) do
+                        if v:IsA("BasePart") and v:FindFirstChild("BallSocketConstraint") and v.Name ~= "Head" then
+                            v.BallSocketConstraint.Enabled = false
+                            if v:FindFirstChild("RagdollLimbPart") then
+                                v.RagdollLimbPart.WeldConstraint.Enabled = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    })
+end
+
+-- =========================================================================
+-- AntiGrab V3: INTEGRATED & REINFORCED DEFENSE
+-- =========================================================================
+do
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local RunService = game:GetService("RunService")
+    local plr = Players.LocalPlayer
+    local Player = plr
+
+    local antiGrabConn = nil
+    local AntiGrabEnabled = false 
+    local HeldConnection = nil
+
+    local isHeld = plr:WaitForChild("IsHeld", 10)
+    local BeingHeld = isHeld
+    if not isHeld then return end
+
+    local struggleEvent = ReplicatedStorage:WaitForChild("CharacterEvents", 10)
+    if struggleEvent then struggleEvent = struggleEvent:WaitForChild("Struggle", 10) end
+    local StruggleEvent = struggleEvent
+
+    -- =====================================================================
+    -- MODIFIED LOGIC: REMOVED POSITION SAVING/TELEPORTING
+    -- =====================================================================
+    local function onHeldChanged(heldState)
+        if not AntiGrabEnabled then return end 
+        local char = plr.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        
+        if heldState then
+            if hrp then 
+                hrp.Anchored = true 
+            end
+            task.spawn(function()
+                while isHeld.Value do 
+                    StruggleEvent:FireServer(plr)
+                    task.wait() 
+                end
+                if hrp then 
+                    hrp.Anchored = false 
+                end
+            end)
+        else
+            if hrp then 
+                hrp.Anchored = false 
+            end
+        end
+    end
+
+    antiGrabConn = isHeld.Changed:Connect(onHeldChanged)
+    if isHeld.Value then onHeldChanged(true) end
+
+    -- =====================================================================
+    -- REINFORCED V3 LOGIC (CLEANED)
+    -- =====================================================================
+    local function StopAntiGrab()
+        AntiGrabEnabled = false
+        if HeldConnection then HeldConnection:Disconnect(); HeldConnection = nil end
+        local Root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+        if Root then Root.Anchored = false end
+        
+        -- Restore Collision
+        for _, part in pairs(Player.Character:GetDescendants()) do 
+            if part:IsA("BasePart") then part.CanCollide = true end 
+        end
+    end
+
+    local function StartAntiGrab()
+        if HeldConnection then HeldConnection:Disconnect() end
+        HeldConnection = BeingHeld:GetPropertyChangedSignal("Value"):Connect(function()
+            if not AntiGrabEnabled or not BeingHeld.Value then return end
+            local Char = Player.Character
+            if not Char then return end
+            
+            local Root = Char:FindFirstChild("HumanoidRootPart")
+            local Hum = Char:FindFirstChildOfClass("Humanoid")
+
+            -- Collision Ghosting
+            for _, part in pairs(Char:GetDescendants()) do 
+                if part:IsA("BasePart") then part.CanCollide = false end 
+            end
+
+            -- LOOP 1: Server Defense
+            task.spawn(function()
+                while AntiGrabEnabled and BeingHeld.Value do
+                    pcall(function()
+                        StruggleEvent:FireServer()
+                        ReplicatedStorage.CharacterEvents.RagdollRemote:FireServer(Root, 0)
+                        ReplicatedStorage.GameCorrectionEvents.StopAllVelocity:FireServer()
+                    end)
+                    task.wait()
+                end
+            end)
+
+            -- LOOP 2: Physics State Enforcement
+            task.spawn(function()
+              
